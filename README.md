@@ -64,4 +64,4 @@ This project deepened my expertise in several areas:
 [Presentation Link](https://github.com/DheerajYata/Home-Credit-Default-Risk/blob/1ce05bdddae2e87daf86ec579916764dcde2df86/Capstone%20Presentation%20Group%206%20(1).pptx)
 
 ## Project File 
-[Project File]()
+[Project File](https://github.com/DheerajYata/Home-Credit-Default-Risk/blob/d4043794193d11c6374f1a8c878bde58793f7e95/Home%20Credit_new_Group_6_modified%20(1).ipynb)
