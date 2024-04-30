@@ -1,0 +1,391 @@
+---
+title: "Home Credit Default Risk EDA"
+author: "Dheeraj Yata"
+date: "2024-02-18"
+output:
+  html_document:
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction 
+
+Home Credit Group is dedicated to expanding financial inclusion by utilizing alternative data sources to assess repayment abilities for underserved populations. Leveraging diverse datasets, including telco and transactional information, Home Credit seeks to ensure equitable access to credit and facilitate successful loan repayment. Through innovative data-driven approaches, Home Credit aims to enhance risk assessment practices and promote responsible lending. This initiative underscores the importance of leveraging advanced analytics to mitigate risk and empower individuals financially. By harnessing predictive modeling techniques, Home Credit strives to provide a positive borrowing experience for all clients.
+
+## Project goal
+
+The project goal would be to develop predictive models for credit risk assessment using the provided dataset, which includes various features such as telco and transactional information. These models aim to accurately predict the repayment abilities of Home Credit's clients, thereby enabling informed lending decisions. The ultimate objective is to enhance Home Credit's credit assessment capabilities, minimize default risk, and ensure fair and equitable access to credit for underserved populations. By achieving this goal, Home Credit seeks to provide a positive borrowing experience for its clients while promoting financial inclusion and empowerment.
+
+```{r message=FALSE}
+#load the libraries
+library(tidyverse)
+library(dplyr)
+library(rpart)
+library(rpart.plot)
+library(skimr)
+library(recipes)
+library(h2o)
+library(tictoc)
+```
+
+## Download and inspect data
+
+```{r message = FALSE}
+#load required data
+test_HC <- read_csv("application_test.csv")
+train_HC <- read_csv("application_train.csv")
+```
+
+```{r}
+#display top most rows of the data.
+head(train_HC)
+head(test_HC)
+
+# shape of the dataset
+num_rows <- nrow(train_HC)
+num_cols <- ncol(train_HC)
+
+print(num_rows)  # Number of rows
+print(num_cols)  # Number of columns
+
+
+```
+
+## Correlations
+
+```{r}
+
+if ("TARGET" %in% colnames(train_HC)) {
+  # Select only numeric columns
+  numeric_cols <- sapply(train_HC, is.numeric)
+  
+  # Exclude the 'TARGET' variable from numeric columns
+  numeric_cols <- numeric_cols & colnames(train_HC) != "TARGET"
+  
+  # Compute the correlation between TARGET variable and all other numeric variables
+  correlation_with_target <- cor(train_HC[, numeric_cols], train_HC$TARGET, use = "pairwise.complete.obs")
+  
+  # Print the correlation with the target variable
+  print(correlation_with_target)
+  
+  # Extract correlation values for TARGET variable
+  correlation_with_target <- abs(correlation_with_target)
+  
+  # Sort correlation values in descending order
+  sorted_correlation <- sort(correlation_with_target, decreasing = TRUE)
+  
+  # Top predictors based on correlation
+  top_predictors <- names(sorted_correlation)
+  
+  # Display top predictors
+  top_predictors
+} else {
+  print("Target variable 'TARGET' not found in the dataset.")
+}
+```
+Top Five Predictors with Positive Correlation:
+DAYS_BIRTH: 0.0782393083
+DAYS_ID_PUBLISH: 0.0514571726
+REGION_RATING_CLIENT_W_CITY: 0.0608926676
+REGION_RATING_CLIENT: 0.0588990149
+DAYS_LAST_PHONE_CHANGE: 0.0552184835
+
+Five Predictors with Negative Correlation:
+EXT_SOURCE_3: -0.1789186976
+EXT_SOURCE_2: -0.1604716716
+EXT_SOURCE_1: -0.1553171261
+AMT_GOODS_PRICE: -0.0396452812
+FLOORSMAX_AVG: -0.0440033705
+
+DAYS_BIRTH has a positive correlation coefficient of 0.078, suggesting that as the age of the applicant (DAYS_BIRTH) increases, there's a slight tendency for the TARGET variable to increase (meaning a higher chance of default).
+
+EXT_SOURCE_1, EXT_SOURCE_2, and EXT_SOURCE_3 have negative correlation coefficients, indicating that as these external scores increase, there's a tendency for the TARGET variable to decrease (meaning a lower chance of default).
+
+
+## Summary table
+
+```{r message = FALSE}
+
+train_HC <- read_csv("application_train.csv")  %>% mutate(TARGET = factor(TARGET))
+
+summary(train_HC)
+
+```
+
+## Accuracy
+
+```{r}
+
+# Calculate majority classifier
+train_HC %>% 
+  dplyr::summarize(TARGET = mean(TARGET =="0"))
+
+```
+This code calculates the proportion of the majority class in the TARGET variable of the train_HC dataset. With a value of approximately 0.919, it indicates that about 91.9% of the observations in the TARGET variable have the value '0'. This suggests that the dataset is imbalanced, with the majority class ('0') dominating the distribution.
+
+## Check missing data
+
+```{r}
+#Check whether there are missing values in the data
+count_missings <- function(x) sum(is.na(x))
+
+train_HC %>% 
+  summarize_all(count_missings) # Handy summarize_all function
+```
+There are many columns with missing values, some columns have greater than 50% NA values in this dataset.
+
+
+```{r}
+# missing percentage of NA values
+missing_pctg <- train_HC %>%
+    summarize_all(.funs = ~ sum(is.na(.)) / length(.)) %>%
+    gather() %>%
+    arrange(desc(value)) %>%
+    filter(value > 0)
+
+head(missing_pctg, n = 45)
+
+```
+
+
+
+```{r}
+
+# Define the count_missings function
+count_missings <- function(x) sum(is.na(x))
+
+
+# Function to remove columns with more than 50% null values
+remove_columns_with_nulls <- function(train_HC, threshold = 0.5) {
+  num_rows <- nrow(train_HC)
+  null_percentages <- colMeans(is.na(train_HC))
+  columns_to_remove <- names(null_percentages[null_percentages > threshold])
+  train_HC <- train_HC %>% dplyr::select(-one_of(columns_to_remove)) # Explicitly call dplyr::select
+  return(train_HC)
+}
+
+# Remove columns with more than 50% null values
+train_HC <- remove_columns_with_nulls(train_HC)
+
+# Check missing values in the remaining columns
+train_HC %>% 
+  summarise_all(count_missings)
+
+```
+
+
+
+
+```{r}
+# assigning a variable for all string variables
+string_2_factor_names <- train_HC %>%
+    select_if(is.character) %>%
+    names()
+
+string_2_factor_names
+
+# assigning a variable for all numeric variables and numeric factor data
+# I looked at which numeric data should be factored (categorical). These typically have a low number of unique levels. I used a few dplyr and purrr operations to get a count of the unique levels. The real trick is using map_df() with the anonymous function ~ unique(.) %>% length(), which counts the unique values in each column, then gather()-ing the results in the long format.
+unique_numeric_values_tbl <- train_HC %>%
+    select_if(is.numeric) %>%
+    map_df(~ unique(.) %>% length()) %>%
+    gather() %>%
+    arrange(value) %>%
+    mutate(key = as_factor(key))
+
+head(unique_numeric_values_tbl)
+
+```
+
+
+```{r}
+# I used a factor limit of 7 meaning any values with less than 7 unique observations will not be converted to factors. I then collected the column names by pull()-ing the key column and storing as character data.
+factor_limit <- 7
+
+num_2_factor_names <- unique_numeric_values_tbl %>%
+    filter(value < factor_limit) %>%
+    arrange(desc(value)) %>%
+    pull(key) %>%
+    as.character()
+
+num_2_factor_names
+```
+
+## Dealing with missing values 
+
+```{r message = FALSE}
+# data cleaning
+data_clean <- recipe(~ ., data = train_HC) %>% step_string2factor(string_2_factor_names) %>%
+    step_mutate_at(num_2_factor_names,fn=factor) %>%  # convert to factor
+    step_impute_median(all_numeric()) %>% # continuous number
+    step_impute_mode(all_nominal()) %>% # category number not order
+    prep(stringsAsFactors = FALSE)
+
+data_clean
+
+# Check for missing values in the processed data
+count_missings <- function(x) sum(is.na(x))
+
+# Extract processed data from the recipe object and naming it train_HC2
+train_HC2 <- bake(data_clean, new_data = NULL)
+
+# Apply the count_missings function to the processed data
+missing_values <- train_HC2 %>%
+  summarize_all(count_missings)
+
+# Print the result
+print(missing_values)
+
+```
+
+
+## Visualizations
+
+```{r}
+# Distribution of TARGET variable
+ggplot(train_HC, aes(x = as.factor(TARGET))) + geom_bar() +
+  labs(title = "Distribution of Target Variable", x = "TARGET", y = "Count") +
+  scale_y_continuous(labels = scales::comma)
+
+# distribution of TARGET based on CODE_GENDER
+ggplot(train_HC2, aes(x = CODE_GENDER, fill = factor(TARGET))) +
+  geom_bar() +
+  labs(title = "Distribution of TARGET based on CODE_GENDER",
+       x = "CODE_GENDER",
+       y = "Count",
+       fill = "TARGET") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))   # Change colors as needed
+
+# distribution of TARGET based on NAME_EDUCATION_TYPE
+ggplot(train_HC2, aes(x = NAME_EDUCATION_TYPE, fill = as.factor(TARGET))) + 
+  geom_bar(position = "fill") + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(title = "Default Rate by Education Type", x = "Education Type", y = "Proportion of Defaults")
+
+# distribution of AMT_INCOME_TOTAL based on TARGET
+ggplot(train_HC2, aes(x = factor(TARGET), y = AMT_INCOME_TOTAL)) +
+  geom_boxplot() +
+  labs(title = "Distribution of AMT_INCOME_TOTAL based on TARGET",
+       x = "TARGET",
+       y = "AMT_INCOME_TOTAL") +
+  scale_y_continuous(labels = scales::comma)
+```
+Distribution of Target Variable:
+
+This bar chart displays a significant imbalance between the two categories of the target variable. The category labeled '0' has a much higher count than the category labeled '1'. Such an imbalance might indicate that the outcome '0' occurs far more frequently than outcome '1' in the dataset. This could be a case of a binary classification problem where one class is much more prevalent than the other, which is common in scenarios such as fraud detection, rare event prediction, etc.
+
+Distribution of TARGET based on CODE_GENDER:
+
+This bar chart differentiates the counts of the target variable by gender. The category '0' of the target variable is predominant in both gender categories, but particularly so in the category labeled as 'F' for female. It suggests that for both genders, the outcome '0' is more common, but the disparity between the outcomes '0' and '1' appears to be larger in the female category compared to the male category. This could imply gender-based differences in the dataset's context, which might be worth investigating further.
+
+Default Rate by Education Type:
+
+The stacked bar chart shows the proportion of defaults (category '1') against no defaults (category '0') by education type. The proportions are relatively similar across different education types, with a slightly higher proportion of defaults in the 'Lower secondary' education category. This suggests that education level might not be a strong differentiator for the default rate in the dataset. However, the slight variation in the 'Lower secondary' category might indicate that this group is slightly more prone to defaults.
+
+Distribution of AMT_INCOME_TOTAL based on TARGET:
+
+This boxplot indicates that there are outliers in the total income for both categories '0' and '1' of the target variable, with some extremely high incomes represented by points above the whiskers. The median income for both target categories appears to be similar, as indicated by the line within the box of the boxplot. The range of income is quite broad, especially for the target category '0', suggesting greater variability in the income of individuals within this category. The presence of outliers could suggest that a few individuals have incomes significantly higher than the rest of the population in the dataset.
+
+## Merging new dataset
+
+```{r message = FALSE}
+bureau <- read_csv("bureau.csv")
+head(bureau)
+```
+
+```{r}
+# shape of the dataset
+num_rows <- nrow(bureau)
+num_cols <- ncol(bureau)
+
+print(num_rows)  # Number of rows
+print(num_cols)  # Number of columns
+summary(bureau)
+
+```
+
+```{r message = FALSE}
+
+# Read application_train data
+application_train <- read.csv("application_train.csv")
+
+# Read bureau data
+bureau <- read.csv("bureau.csv")
+
+# Merge the two datasets based on a common key
+merged_data <- inner_join(application_train, bureau, by = "SK_ID_CURR")
+
+head(merged_data)
+
+```
+
+```{r}
+# shape of the dataset
+num_rows <- nrow(merged_data)
+num_cols <- ncol(merged_data)
+
+print(num_rows)  # Number of rows
+print(num_cols)  # Number of columns
+summary(merged_data)
+
+```
+
+```{r}
+# Remove columns with more than 50% null values
+threshold <- nrow(merged_data) * 0.5
+merged_data <- merged_data[, colMeans(is.na(merged_data)) < 0.5]
+
+# Correlations with target variable
+if ("TARGET" %in% colnames(merged_data)) {
+  # Select only numeric columns
+  numeric_cols <- sapply(merged_data, is.numeric)
+  
+  # Exclude the 'TARGET' variable from numeric columns
+  numeric_cols <- numeric_cols & colnames(merged_data) != "TARGET"
+  
+  # Compute the correlation between TARGET variable and all other numeric variables
+  correlation_with_target <- cor(merged_data[, numeric_cols], merged_data$TARGET, use = "complete.obs")
+  
+  # Print the correlation with the target variable
+  print(correlation_with_target)
+} else {
+  print("Target variable 'TARGET' not found in the dataset.")
+}
+
+```
+
+Top Predictors from Positive Correlation:
+DAYS_BIRTH: Correlation coefficient = 0.0615994831
+DAYS_ID_PUBLISH: Correlation coefficient = 0.0368846529
+DAYS_LAST_PHONE_CHANGE: Correlation coefficient = 0.0362559931
+REGION_RATING_CLIENT_W_CITY: Correlation coefficient = 0.0456972823
+REGION_RATING_CLIENT: Correlation coefficient = 0.0437428520
+
+Top Predictors from Negative Correlation:
+EXT_SOURCE_3: Correlation coefficient = -0.1650279682
+EXT_SOURCE_2: Correlation coefficient = -0.1355450870
+EXT_SOURCE_1: Correlation coefficient = -0.1553171261
+FLOORSMAX_AVG: Correlation coefficient = -0.0331606436
+FLOORSMAX_MEDI: Correlation coefficient = -0.0329937231
+
+## Comparing application_train and merged data with correlations
+
+Comparing the top predictors from positive and negative correlation between the merged data and the `application_train` data reveals some differences:
+
+Positive Correlation:
+- In the merged data, the correlation coefficients for DAYS_BIRTH, DAYS_ID_PUBLISH, REGION_RATING_CLIENT_W_CITY, and REGION_RATING_CLIENT are slightly lower compared to the application_train data.
+- DAYS_LAST_PHONE_CHANGE has a similar correlation coefficient in both datasets.
+
+Negative Correlation:
+- For EXT_SOURCE_3, EXT_SOURCE_2, and EXT_SOURCE_1, the correlation coefficients are consistent between the merged data and the application_train data.
+- FLOORSMAX_AVG and FLOORSMAX_MEDI have slightly lower correlation coefficients in the merged data compared to the    application_train data.
+
+Overall, while there are some differences in the correlation coefficients between the two datasets, the top predictors with positive and negative correlation remain largely consistent. These differences could be due to the inclusion of additional variables or different distributions in the merged dataset, which might affect the correlations with the target variable. Further analysis may be needed to understand the reasons behind these differences and their implications for modeling or analysis.
+
+```{r}
+
+
+```
