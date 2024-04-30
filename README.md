@@ -58,3 +58,10 @@ This project deepened my expertise in several areas:
 **Data Handling Skills**: Enhanced my ability to preprocess and engineer features from complex datasets effectively.
 
 **Strategic Business Thinking**: Improved my skills in translating technical findings into actionable business strategies.
+
+
+## Presentation Link 
+[Presentation Link](https://github.com/DheerajYata/Home-Credit-Default-Risk/blob/1ce05bdddae2e87daf86ec579916764dcde2df86/Capstone%20Presentation%20Group%206%20(1).pptx)
+
+## Project File 
+[Project File]()
